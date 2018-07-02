@@ -352,15 +352,12 @@ const char                      *AslCompilerMsgs [] =
 /*    ASL_MSG_EXCEPTION_NOT_RECEIVED */     "Expected remark, warning, or error did not occur. Message ID:",
 /*    ASL_MSG_NULL_RESOURCE_TEMPLATE */     "Empty Resource Template (END_TAG only)",
 /*    ASL_MSG_FOUND_HERE */                 "Original name creation/declaration below: ",
-/*    ASL_MSG_ILLEGAL_RECURSION */          "Illegal recursive call to method that creates named objects"
 /*    ASL_MSG_ILLEGAL_RECURSION */          "Illegal recursive call to method that creates named objects",
 /*    ASL_MSG_EXTERN_COLLISION */           "A name cannot be defined and declared external in the same table",
 /*    ASL_MSG_FOUND_HERE_EXTERN */          "Remove one of the declarations indicated above or below:",
 /*    ASL_MSG_OEM_TABLE_ID */               "Invalid OEM Table ID",
-/*    ASL_MSG_OEM_ID */                     "Invalid OEM ID"
-
-    //REVIEW_REHABMAN: added
-/*    ASL_MSG_NAME_ALREADY_HAS_TYPE */      "Name already has different type in scope",
+/*    ASL_MSG_OEM_ID */                     "Invalid OEM ID",
+/*    ASL_MSG_UNLOAD */                     "Unload is not supported by all operating systems"
 };
 
 /* Table compiler */

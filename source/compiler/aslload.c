@@ -321,8 +321,7 @@ LdLoadFieldElements (
                     return (Status);
                 }
                 else if (Status == AE_ALREADY_EXISTS &&
-                    (Node->Flags & ANOBJ_IS_EXTERNAL) &&
-                    (Node->OwnerId != WalkState->OwnerId || Gbl_RehabManHacks))
+                    (Node->Flags & ANOBJ_IS_EXTERNAL))
                 {
                     Node->Type = (UINT8) ACPI_TYPE_LOCAL_REGION_FIELD;
                 }
@@ -474,7 +473,6 @@ LdNamespace1Begin (
     ACPI_PARSE_OBJECT       *Arg;
     UINT32                  i;
     BOOLEAN                 ForceNewScope = FALSE;
-    ACPI_OWNER_ID           OwnerId = 0;
     const ACPI_OPCODE_INFO  *OpInfo;
     ACPI_PARSE_OBJECT       *ParentOp;
 
@@ -484,23 +482,6 @@ LdNamespace1Begin (
 
     ACPI_DEBUG_PRINT ((ACPI_DB_DISPATCH, "Op %p [%s]\n",
         Op, Op->Asl.ParseOpName));
-
-    if (Op->Asl.ParseOpcode == PARSEOP_DEFINITION_BLOCK)
-    {
-        /*
-         * Allocate an OwnerId for this block. This helps identify the owners
-         * of each namespace node. This is used in determining whether if
-         * certain external declarations cause redefinition errors.
-         */
-        Status = AcpiUtAllocateOwnerId (&OwnerId);
-        WalkState->OwnerId = OwnerId;
-        if (ACPI_FAILURE (Status))
-        {
-            AslCoreSubsystemError (Op, Status,
-                "Failure to allocate owner ID to this definition block.", FALSE);
-            return_ACPI_STATUS (Status);
-        }
-    }
 
     /*
      * We are only interested in opcodes that have an associated name
@@ -765,7 +746,7 @@ LdNamespace1Begin (
                 {
                     /* Not in a control method, error */
 
-                    AslError (Gbl_RehabManHacks ? ASL_WARNING : ASL_ERROR, ASL_MSG_CROSS_TABLE_SCOPE, Op, NULL);
+                    AslError (ASL_ERROR, ASL_MSG_CROSS_TABLE_SCOPE, Op, NULL);
                 }
             }
         }
@@ -875,21 +856,9 @@ LdNamespace1Begin (
             else if ((Node->Flags & ANOBJ_IS_EXTERNAL) &&
                      (Op->Asl.ParseOpcode != PARSEOP_EXTERNAL))
             {
-                if (Gbl_RehabManHacks && Node->Type != ACPI_TYPE_ANY && Node->Type != ObjectType
-                    // this exception for External(CPU0, DeviceObj), followed by Processor(CPU0,...)
-                    && !(ObjectType == ACPI_TYPE_PROCESSOR && Node->Type == ACPI_TYPE_DEVICE)
-                    && !(ObjectType == ACPI_TYPE_THERMAL && Node->Type == ACPI_TYPE_DEVICE))
-                {
-                    sprintf (MsgBuffer, "%s [%s]", Op->Asl.ExternalName, AcpiUtGetTypeName (Node->Type));
-                    AslError (ASL_ERROR, ASL_MSG_NAME_ALREADY_HAS_TYPE, Op, MsgBuffer);
-                    //REVIEW_REHABMAN: we can't just ignore it here, as there is no good way to avoid opening the scope...
-                    //return_ACPI_STATUS (AE_OK);
-                }
                 /*
                  * Allow one create on an object or segment that was
-                 * previously declared External only if WalkState->OwnerId and
-                 * Node->OwnerId are different (meaning that the current WalkState
-                 * and the Node are in different tables).
+                 * previously declared External
                  */
                 Node->Flags &= ~ANOBJ_IS_EXTERNAL;
                 Node->Type = (UINT8) ObjectType;
@@ -906,19 +875,6 @@ LdNamespace1Begin (
                 }
 
                 Status = AE_OK;
-
-                if (!Gbl_RehabManHacks &&
-                    Node->OwnerId == WalkState->OwnerId &&
-                    !(Node->Flags & IMPLICIT_EXTERNAL))
-                {
-                    AslDualParseOpError (ASL_WARNING, ASL_MSG_EXTERN_COLLISION, Op,
-                        Op->Asl.ExternalName, ASL_MSG_EXTERN_FOUND_HERE, Node->Op,
-                        Node->Op->Asl.ExternalName);
-                }
-                if (Node->Flags & IMPLICIT_EXTERNAL)
-                {
-                    Node->Flags &= ~IMPLICIT_EXTERNAL;
-                }
             }
             else if (!(Node->Flags & ANOBJ_IS_EXTERNAL) &&
                      (Op->Asl.ParseOpcode == PARSEOP_EXTERNAL))
@@ -926,75 +882,17 @@ LdNamespace1Begin (
                 /*
                  * Allow externals in same scope as the definition of the
                  * actual object. Similar to C. Allows multiple definition
-                 * blocks that refer to each other in the same file. However,
-                 * do not allow name declaration and an external declaration
-                 * within the same table. This is considered a re-declaration.
+                 * blocks that refer to each other in the same file.
                  */
                 Status = AE_OK;
-
-                if (Gbl_RehabManHacks && Node->Type != ActualObjectType)
-                {
-                    if (ActualObjectType != ACPI_TYPE_ANY)
-                    {
-                        sprintf (MsgBuffer, "%s [%s]", Op->Asl.ExternalName, AcpiUtGetTypeName (Node->Type));
-                        AslError (ASL_ERROR, ASL_MSG_NAME_ALREADY_HAS_TYPE, Op, MsgBuffer);
-                    }
-                    return_ACPI_STATUS (Status);
-                }
-
-                if (!Gbl_RehabManHacks && Node->OwnerId == WalkState->OwnerId)
-                {
-                    AslDualParseOpError (ASL_WARNING, ASL_MSG_EXTERN_COLLISION, Op,
-                        Op->Asl.ExternalName, ASL_MSG_EXTERN_FOUND_HERE, Node->Op,
-                        Node->Op->Asl.ExternalName);
-                }
             }
             else if ((Node->Flags & ANOBJ_IS_EXTERNAL) &&
                      (Op->Asl.ParseOpcode == PARSEOP_EXTERNAL) &&
                      (ObjectType == ACPI_TYPE_ANY))
             {
-                /*
-                 * Allow update of externals of unknown type.
-                 * In the case that multiple definition blocks are being
-                 * parsed, updating the OwnerId allows enables subsequent calls
-                 * of this method to understand which table the most recent
-                 * external declaration was seen. Without this OwnerId update,
-                 * code like the following is allowed to compile:
-                 *
-                 * DefinitionBlock("externtest.aml", "DSDT", 0x02, "Intel", "Many", 0x00000001)
-                 * {
-                 *     External(ERRS,methodobj)
-                 *     Method (MAIN)
-                 *     {
-                 *         Name(NUM2, 0)
-                 *         ERRS(1,2,3)
-                 *     }
-                 * }
-                 *
-                 * DefinitionBlock("externtest.aml", "SSDT", 0x02, "Intel", "Many", 0x00000001)
-                 * {
-                 *     if (0)
-                 *     {
-                 *         External(ERRS,methodobj)
-                 *     }
-                 *     Method (ERRS,3)
-                 *     {}
-                 *
-                 * }
-                 */
-                Node->OwnerId = WalkState->OwnerId;
+                /* Allow update of externals of unknown type. */
 
-                if (Gbl_RehabManHacks && Node->Type != ACPI_TYPE_ANY && Node->Type != ActualObjectType)
-                {
-                    if (ActualObjectType != ACPI_TYPE_ANY)
-                    {
-                        sprintf (MsgBuffer, "%s [%s]", Op->Asl.ExternalName, AcpiUtGetTypeName (Node->Type));
-                        AslError (ASL_ERROR, ASL_MSG_NAME_ALREADY_HAS_TYPE, Op, MsgBuffer);
-                    }
-                    return_ACPI_STATUS (AE_OK);
-                }
-                else if (AcpiNsOpensScope (ActualObjectType) ||
-                         (Gbl_RehabManHacks && Node->Type == ACPI_TYPE_ANY) || Node->Type == ActualObjectType)
+                if (AcpiNsOpensScope (ActualObjectType))
                 {
                     Node->Type = (UINT8) ActualObjectType;
                     Status = AE_OK;
